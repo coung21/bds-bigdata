@@ -1,0 +1,9 @@
+playwright
+loguru
+python-dotenv
+aiokafka
+schedule
+pyspark
+psycopg2-binary
+streamlit
+SQLAlchemy
