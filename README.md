@@ -1,6 +1,6 @@
 # BDS Big Data Pipeline
 
-A simple pipeline to crawl listings, stream raw data to Kafka, process with Spark, and persist to Postgres. Includes a Streamlit dashboard to explore recent rows and basic charts.
+A simple pipeline to crawl listings, stream raw data to Kafka, process with Spark, and persist to Postgres. Includes a Streamlit dashboard for monitoring prices, areas, locations, and recent listings.
 
 ## Requirements
 
@@ -30,10 +30,17 @@ make run-producer
 
 ```bash
 conda activate bds
-streamlit run dashboard/streamlit_app.py --server.address 0.0.0.0 --server.port 8501
+make run-dashboard
 ```
 
 Open: http://localhost:8501
+
+The dashboard includes:
+
+- Filters for row count, area, total price, and district/area.
+- KPI cards for listing count, average total price, average area, and average price per square meter.
+- Charts for unit price trend, top listing areas, total price distribution, and area distribution.
+- A recent listings table with direct links to source pages.
 
 ## Stop everything
 

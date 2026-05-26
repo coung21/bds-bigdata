@@ -4,7 +4,7 @@ KAFKA_CONTAINER = bds_kafka
 BOOTSTRAP_SERVER = localhost:9092
 TOPIC = bds.raw
 
-.PHONY: help up down create-topic show-raw run-producer run-spark logs status
+.PHONY: help up down create-topic show-raw run-producer run-spark run-dashboard logs status
 
 help:
 	@echo "=========================================================================="
@@ -17,6 +17,7 @@ help:
 	@echo "  make show-raw      - Lắng nghe và hiển thị dữ liệu thô đang có trong topic '$(TOPIC)'"
 	@echo "  make run-producer  - Chạy Producer để cào dữ liệu mới đẩy vào Kafka"
 	@echo "  make run-spark     - Kích hoạt Spark Streaming để xử lý, làm sạch Real-time"
+	@echo "  make run-dashboard - Chạy Streamlit dashboard tại http://localhost:8501"
 	@echo "  make logs          - Xem log thời gian thực của các containers"
 	@echo "  make status        - Xem trạng thái hoạt động của các container Docker"
 	@echo "=========================================================================="
@@ -38,6 +39,9 @@ run-producer:
 
 run-spark:
 	$(PYTHON) processing/spark_stream.py
+
+run-dashboard:
+	streamlit run dashboard/streamlit_app.py --server.address 0.0.0.0 --server.port 8501
 
 logs:
 	docker compose logs -f
