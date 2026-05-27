@@ -1,6 +1,9 @@
 import asyncio
 import os
 import re
+import random
+import time
+from typing import List, Optional
 
 from playwright.async_api import async_playwright
 from loguru import logger
@@ -10,6 +13,16 @@ load_dotenv()
 
 
 BASE_URL = os.getenv("URL", "https://batdongsan.com.vn/ban-nha-dat")
+USER_AGENT_LIST = os.getenv(
+    "USER_AGENT_LIST",
+    """
+Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/58.0.3029.110 Safari/537.3,
+Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/14.0 Safari/605.1.15,
+Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/88.0.4324.96 Safari/537.36
+""",
+)
+PROXY_LIST = os.getenv("PROXY_LIST", "")
+MAX_GOTO_RETRIES = int(os.getenv("MAX_GOTO_RETRIES", "3"))
 
 
 def _has_digits(value: str) -> bool:
@@ -39,15 +52,49 @@ def _is_record_complete(record: dict) -> bool:
         and _is_area_usable(record.get("Area_Raw", ""))
     )
 
+
+def _parse_user_agent_list(env_value: str) -> List[str]:
+    parts = [p.strip() for p in env_value.split(",") if p.strip()]
+    return parts if parts else []
+
+
+def _choose_proxy() -> Optional[str]:
+    if not PROXY_LIST:
+        return None
+    proxies = [p.strip() for p in PROXY_LIST.split(",") if p.strip()]
+    return random.choice(proxies) if proxies else None
+
+
+def _choose_user_agent() -> str:
+    uas = _parse_user_agent_list(USER_AGENT_LIST)
+    if uas:
+        return random.choice(uas)
+    # fallback
+    return (
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+        "(KHTML, like Gecko) Chrome/58.0.3029.110 Safari/537.3"
+    )
+
 async def extract_data(pages_to_crawl=1):
 
     data_list = []
 
     async with async_playwright() as p:
-        browser = await p.chromium.launch(headless=True)
-        context = await browser.new_context(
-            user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/58.0.3029.110 Safari/537.3"
-        )
+        # Choose proxy and user-agent (anti-bot)
+        proxy = _choose_proxy()
+        user_agent = _choose_user_agent()
+
+        launch_kwargs = {"headless": True}
+        if proxy:
+            try:
+                launch_kwargs["proxy"] = {"server": proxy}
+                logger.info(f"[Scraper] Using proxy: {proxy}")
+            except Exception:
+                logger.warning("[Scraper] Invalid proxy format, ignoring proxy")
+
+        browser = await p.chromium.launch(**launch_kwargs)
+
+        context = await browser.new_context(user_agent=user_agent)
         page = await context.new_page()
 
         for page_num in range(1, pages_to_crawl + 1):
@@ -56,11 +103,37 @@ async def extract_data(pages_to_crawl=1):
             logger.info(f"[Scraper] Đang quét trang {url}")
             
             try:
-                await page.goto(url, wait_until="domcontentloaded", timeout=30000)
+                # retry/backoff for navigation to handle transient anti-bot blocks
+                nav_succeeded = False
+                for attempt in range(MAX_GOTO_RETRIES):
+                    try:
+                        await page.goto(url, wait_until="domcontentloaded", timeout=30000)
+                        nav_succeeded = True
+                        break
+                    except Exception as e:
+                        backoff = (2 ** attempt) * random.uniform(0.5, 1.5)
+                        logger.warning(f"[Scraper] goto failed (attempt {attempt + 1}): {e}; backoff {backoff:.1f}s")
+                        await page.wait_for_timeout(int(backoff * 1000))
 
-                for _ in range(2):
-                    await page.mouse.wheel(0, 1000)
-                    await page.wait_for_timeout(600)
+                if not nav_succeeded:
+                    logger.error(f"[Scraper] Failed to navigate to {url} after retries")
+                    continue
+
+                # small randomized delay after load
+                await page.wait_for_timeout(random.randint(500, 1500))
+
+                # randomized scrolls / human-like movement
+                scroll_count = random.randint(2, 4)
+                for _ in range(scroll_count):
+                    amount = random.randint(600, 1200)
+                    await page.mouse.wheel(0, amount)
+                    await page.wait_for_timeout(random.randint(400, 1200))
+                    # occasional small mouse movement
+                    if random.random() < 0.3:
+                        try:
+                            await page.mouse.move(random.randint(0, 800), random.randint(0, 600))
+                        except Exception:
+                            pass
 
                 cards = await page.query_selector_all("div.js__card")
                 total_cards = len(cards)
@@ -100,6 +173,11 @@ async def extract_data(pages_to_crawl=1):
                     except:
                         skipped += 1
                         continue
+                    # small randomized pause between processing cards to reduce request rate
+                    try:
+                        await page.wait_for_timeout(random.randint(20, 150))
+                    except Exception:
+                        pass
 
                 logger.info(
                     f"[Scraper] Page {page_num}: kept {kept}/{total_cards} cards "
