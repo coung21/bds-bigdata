@@ -7,7 +7,7 @@ os.environ["PYSPARK_DRIVER_PYTHON"] = sys.executable
 
 from loguru import logger
 from pyspark.sql import SparkSession
-from pyspark.sql.functions import col, from_json, udf, round
+from pyspark.sql.functions import col, from_json, udf, round, to_timestamp
 from pyspark.sql.types import StructType, StructField, StringType, DoubleType
 from transform_utils import clean_area, clean_price
 
@@ -104,7 +104,7 @@ def main():
         # Tính thêm đơn giá chuẩn đơn vị VND/m2 làm chỉ số phân tích biến động
         round(col("Price_VND") / col("Area_M2"), 2).alias("unit_price_m2"),
         col("Location").alias("location"),
-        col("Published_Date").alias("published_date"),
+        to_timestamp(col("Published_Date"), "dd/MM/yyyy").alias("published_date"),
         col("URL").alias("url")
     )
 
@@ -127,6 +127,14 @@ def main():
                         id, title, total_price_vnd, area_m2,
                         unit_price_m2, location, published_date, url
                     ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                    ON CONFLICT (id) DO UPDATE SET
+                        title = EXCLUDED.title,
+                        total_price_vnd = EXCLUDED.total_price_vnd,
+                        area_m2 = EXCLUDED.area_m2,
+                        unit_price_m2 = EXCLUDED.unit_price_m2,
+                        location = EXCLUDED.location,
+                        published_date = EXCLUDED.published_date,
+                        url = EXCLUDED.url
                 """, (
                     row.post_id, 
                     row.title, 
@@ -137,9 +145,6 @@ def main():
                     row.published_date, 
                     row.url
                 ))
-            except psycopg2.IntegrityError:
-                # Tránh duplicate ID nếu chạy lại
-                pass
             except Exception as e:
                 logger.error(f"Error inserting row: {e}")
                 
@@ -147,6 +152,18 @@ def main():
         conn.close()
         
         logger.info(f"[Batch {batch_id}] Write complete.")
+
+    logger.info("[Spark Streaming] Đang cấu hình và kích hoạt Streaming Query...")
+    
+    # Kích hoạt luồng chạy thực tế lưu vào database Postgres
+    query = final_clean_df.writeStream \
+        .foreachBatch(write_to_db) \
+        .option("checkpointLocation", "./checkpoint") \
+        .trigger(processingTime="10 seconds") \
+        .start()
+
+    logger.info("[Spark Streaming] Pipeline đang hoạt động liên tục. Đang đợi dữ liệu...")
+    query.awaitTermination()
 
 
 if __name__ == "__main__":

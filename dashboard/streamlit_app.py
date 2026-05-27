@@ -31,7 +31,7 @@ def get_engine():
     )
 
 
-@st.cache_data(ttl=30)
+@st.cache_data(ttl=5)
 def fetch_rows(limit: int) -> pd.DataFrame:
     query = """
         SELECT id, title, total_price_vnd, area_m2, unit_price_m2,
@@ -59,7 +59,7 @@ def prepare_data(df: pd.DataFrame) -> pd.DataFrame:
         return df
 
     data = df.copy()
-    data["published_date"] = pd.to_datetime(data["published_date"], errors="coerce")
+    data["published_date"] = pd.to_datetime(data["published_date"], dayfirst=True, errors="coerce")
     data["published_day"] = data["published_date"].dt.date
     data["location"] = data["location"].fillna("Unknown")
     data["district"] = data["location"].apply(extract_district)
@@ -83,18 +83,18 @@ def slider_bounds(min_value: float, max_value: float, fallback_step: float) -> t
     return min_value, max_value, max((max_value - min_value) / 100, fallback_step)
 
 
-def apply_filters() -> pd.DataFrame:
+def render_sidebar_filters() -> dict:
     st.sidebar.header("Filters")
     limit = st.sidebar.slider("Rows to load", 50, 1000, 300, step=50)
 
     if st.sidebar.button("Reload data", use_container_width=True):
         st.cache_data.clear()
 
-    df = prepare_data(fetch_rows(limit))
-    if df.empty:
-        return df
+    df_raw = prepare_data(fetch_rows(limit))
+    if df_raw.empty:
+        return {"empty": True}
 
-    districts = sorted(df["district"].dropna().unique().tolist())
+    districts = sorted(df_raw["district"].dropna().unique().tolist())
     selected_districts = st.sidebar.multiselect(
         "District / area",
         districts,
@@ -102,13 +102,13 @@ def apply_filters() -> pd.DataFrame:
     )
 
     price_min, price_max, price_step = slider_bounds(
-        float(df["total_price_vnd"].min(skipna=True)),
-        float(df["total_price_vnd"].max(skipna=True)),
+        float(df_raw["total_price_vnd"].min(skipna=True)),
+        float(df_raw["total_price_vnd"].max(skipna=True)),
         1_000_000.0,
     )
     area_min, area_max, area_step = slider_bounds(
-        float(df["area_m2"].min(skipna=True)),
-        float(df["area_m2"].max(skipna=True)),
+        float(df_raw["area_m2"].min(skipna=True)),
+        float(df_raw["area_m2"].max(skipna=True)),
         1.0,
     )
 
@@ -129,12 +129,13 @@ def apply_filters() -> pd.DataFrame:
         format="%.1f",
     )
 
-    filtered = df[
-        df["district"].isin(selected_districts)
-        & df["total_price_vnd"].between(price_range[0], price_range[1])
-        & df["area_m2"].between(area_range[0], area_range[1])
-    ]
-    return filtered
+    return {
+        "limit": limit,
+        "selected_districts": selected_districts,
+        "price_range": price_range,
+        "area_range": area_range,
+        "empty": False
+    }
 
 
 def render_kpis(df: pd.DataFrame):
@@ -234,25 +235,47 @@ def render_table(df: pd.DataFrame):
     )
 
 
+@st.fragment(run_every=10)
+def render_dashboard_content(filters: dict):
+    if filters["empty"]:
+        st.info("No records found in price_logs. Start Spark and producer to populate data.")
+        return
+
+    # Load fresh data inside the fragment every 10 seconds
+    df = prepare_data(fetch_rows(filters["limit"]))
+    if df.empty:
+        st.info("No records found in price_logs. Start Spark and producer to populate data.")
+        return
+
+    # Apply the filters locally inside the fragment
+    filtered = df[
+        df["district"].isin(filters["selected_districts"])
+        & df["total_price_vnd"].between(filters["price_range"][0], filters["price_range"][1])
+        & df["area_m2"].between(filters["area_range"][0], filters["area_range"][1])
+    ]
+
+    if filtered.empty:
+        st.info("No listings match the selected filters.")
+        return
+
+    render_kpis(filtered)
+    st.divider()
+    render_charts(filtered)
+    st.divider()
+    render_table(filtered)
+
+
 def main():
     st.title("BDS Market Dashboard")
     st.caption("Real-time view of cleaned listing prices stored in Postgres.")
 
     try:
-        df = apply_filters()
+        filters = render_sidebar_filters()
     except Exception as exc:
         st.error(f"Cannot load data from Postgres: {exc}")
         st.stop()
 
-    if df.empty:
-        st.info("No records found in price_logs. Start Spark and producer to populate data.")
-        return
-
-    render_kpis(df)
-    st.divider()
-    render_charts(df)
-    st.divider()
-    render_table(df)
+    render_dashboard_content(filters)
 
 
 if __name__ == "__main__":
