@@ -75,6 +75,7 @@ def main():
         .option("kafka.bootstrap.servers", "localhost:9092") \
         .option("subscribe", "bds.raw") \
         .option("startingOffsets", "earliest") \
+        .option("failOnDataLoss", "false") \
         .load()
 
     #Decode data json from kafka

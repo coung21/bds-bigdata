@@ -24,6 +24,13 @@ Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/88
 PROXY_LIST = os.getenv("PROXY_LIST", "")
 MAX_GOTO_RETRIES = int(os.getenv("MAX_GOTO_RETRIES", "3"))
 
+CARD_SELECTORS = [
+    "div.js__card",
+    "article.js__card",
+    "article[prid]",
+    "div[prid]",
+]
+
 
 def _has_digits(value: str) -> bool:
     return bool(value and re.search(r"\d", value))
@@ -75,6 +82,23 @@ def _choose_user_agent() -> str:
         "(KHTML, like Gecko) Chrome/58.0.3029.110 Safari/537.3"
     )
 
+
+async def _wait_for_listing_cards(page) -> None:
+    """Wait until the listing cards are present before extracting data."""
+    selector = ", ".join(CARD_SELECTORS)
+    try:
+        await page.wait_for_selector(selector, timeout=15000)
+    except Exception:
+        logger.warning("[Scraper] Không thấy card sau khi tải trang; sẽ thử quét với selector dự phòng.")
+
+
+async def _collect_listing_cards(page):
+    for selector in CARD_SELECTORS:
+        cards = await page.query_selector_all(selector)
+        if cards:
+            return cards
+    return []
+
 async def extract_data(pages_to_crawl=1):
 
     data_list = []
@@ -119,6 +143,8 @@ async def extract_data(pages_to_crawl=1):
                     logger.error(f"[Scraper] Failed to navigate to {url} after retries")
                     continue
 
+                await _wait_for_listing_cards(page)
+
                 # small randomized delay after load
                 await page.wait_for_timeout(random.randint(500, 1500))
 
@@ -135,7 +161,7 @@ async def extract_data(pages_to_crawl=1):
                         except Exception:
                             pass
 
-                cards = await page.query_selector_all("div.js__card")
+                cards = await _collect_listing_cards(page)
                 total_cards = len(cards)
                 kept = 0
                 skipped = 0
@@ -143,16 +169,18 @@ async def extract_data(pages_to_crawl=1):
                 for card in cards:
                     try:
                         prid = await card.get_attribute("prid")
-                        link_el = await card.query_selector("a.js__product-link-for-product-id")
+                        link_el = await card.query_selector("a.js__product-link-for-product-id, a[href*='/ban-']")
                         url_tin = f"https://batdongsan.com.vn{await link_el.get_attribute('href')}" if link_el else ""
-                        title_el = await card.query_selector(".js__card-title")
+                        title_el = await card.query_selector(".js__card-title, a.js__card-title, [class*='card-title']")
                         title = await title_el.inner_text() if title_el else ""
-                        price = await (await card.query_selector(".re__card-config-price")).inner_text() if await card.query_selector(".re__card-config-price") else ""
-                        area = await (await card.query_selector(".re__card-config-area")).inner_text() if await card.query_selector(".re__card-config-area") else ""
-                        location_el = await card.query_selector(".re__card-location")
+                        price_el = await card.query_selector(".re__card-config-price, [class*='card-config-price']")
+                        price = await price_el.inner_text() if price_el else ""
+                        area_el = await card.query_selector(".re__card-config-area, [class*='card-config-area']")
+                        area = await area_el.inner_text() if area_el else ""
+                        location_el = await card.query_selector(".re__card-location, [class*='card-location']")
                         location = await location_el.inner_text() if location_el else ""
                         location = location.replace("·", "").strip()
-                        date_el = await card.query_selector(".re__card-published-info-published-at")
+                        date_el = await card.query_selector(".re__card-published-info-published-at, [aria-label*='Đăng'], [class*='published-at']")
                         published_date = await date_el.get_attribute("aria-label") if date_el else "N/A"
 
                         record = {

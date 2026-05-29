@@ -30,7 +30,7 @@ async def run_crawl_job():
         return
 
     try:
-        raw_records = await extract_data(pages_to_crawl=1)
+        raw_records = await extract_data(pages_to_crawl=5)
         
         # Lọc các tin trùng lặp với chu kỳ trước
         new_records = []
