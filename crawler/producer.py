@@ -30,7 +30,7 @@ async def run_crawl_job():
         return
 
     try:
-        raw_records = await extract_data(pages_to_crawl=5)
+        raw_records = await extract_data(pages_to_crawl=1)
         
         # Lọc các tin trùng lặp với chu kỳ trước
         new_records = []
@@ -68,7 +68,7 @@ if __name__ == "__main__":
     # Chạy thử/kích hoạt ngay khi khởi động
     asyncio.run(run_crawl_job())
     
-    schedule.every(60).seconds.do(lambda: asyncio.run(run_crawl_job()))
+    schedule.every(15).seconds.do(lambda: asyncio.run(run_crawl_job()))
 
     while True:
         schedule.run_pending()

@@ -1,5 +1,7 @@
 import os
 import sys
+import tempfile
+from pathlib import Path
 import psycopg2 
 # Đồng bộ hóa môi trường Python của Spark Worker với Conda Driver
 os.environ["PYSPARK_PYTHON"] = sys.executable
@@ -67,6 +69,11 @@ def main():
     spark.sparkContext.addPyFile(os.path.join(os.path.dirname(__file__), "transform_utils.py"))
 
     spark.sparkContext.setLogLevel("ERROR")
+
+    checkpoint_root = Path(__file__).resolve().parent.parent / "checkpoint"
+    checkpoint_root.mkdir(parents=True, exist_ok=True)
+    checkpoint_dir = tempfile.mkdtemp(prefix="spark_stream_", dir=str(checkpoint_root))
+    logger.info(f"[Spark Streaming] Using fresh checkpoint directory: {checkpoint_dir}")
 
     logger.info("[Spark Streaming] Đang kết nối và listen topic Kafka 'bds.raw'...")
 
@@ -159,7 +166,7 @@ def main():
     # Kích hoạt luồng chạy thực tế lưu vào database Postgres
     query = final_clean_df.writeStream \
         .foreachBatch(write_to_db) \
-        .option("checkpointLocation", "./checkpoint") \
+        .option("checkpointLocation", checkpoint_dir) \
         .trigger(processingTime="10 seconds") \
         .start()
 
